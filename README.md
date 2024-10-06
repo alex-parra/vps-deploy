@@ -36,15 +36,16 @@
    - `start`: `node ./build/server.js` Called by pm2 to run the app on the server.
 5. Add secrets to the repository:
    - `SSH_PRIVATE_KEY`: The private key to use for the deployment.
+   - `SSH_USER`: The user to use for the deployment.
    - `SERVER_IP`: The IP address of the deployment server.
    - `DOMAIN`: The domain name of the deployment server.
-   - `ENV_FILE`: Additional environment variables to pass to the server.
+   - `ENV_FILE`: Additional environment variables to pass to the app.
 6. On git push, the workflow will run and deploy the app to the server.
 
 Files purposes:
-- `config.sh`: helper functions for the deployment.
 - `init.sh`: initialization file for the deployment, called by the github actions workflow.
 - `server_build.sh`: server build file for the deployment, called by `init.sh` and runs on the server.
+- `utils.sh`: helper functions for the deployment.
 
 ---
 

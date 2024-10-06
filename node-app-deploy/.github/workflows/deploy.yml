@@ -22,6 +22,7 @@ jobs:
       - name: Deploy
         run: bash ./_deploy/init.sh
         env:
+          USER: ${{ secrets.SSH_USER }}
           SERVER_IP: ${{ secrets.SERVER_IP }}
           DOMAIN: ${{ secrets.DOMAIN }}
           ENV_FILE: ${{ secrets.ENV_FILE || ' ' }}

@@ -5,18 +5,13 @@ set -euo pipefail
 SCRIPT_DIR=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" &>/dev/null && pwd)
 source $SCRIPT_DIR/utils.sh
 
-REPO_URL="$REPO_URL" # set in environment by init.sh
-DOMAIN="$DOMAIN"     # set in environment by init.sh
+REPO_NAME="$REPO_NAME" # set in environment by init.sh
+DOMAIN="$DOMAIN"       # set in environment by init.sh
+USER="$USER"           # set in environment by init.sh
+BASE="$BASE"           # set in environment by init.sh
 
-REPO_NAME=$(basename "$REPO_URL" ".${REPO_URL##*.}") # get repository name without user and extension
-
-REPO_DIR="repo" # directory where the repository is cloned
-BKP_DIR="bkp"   # directory where backup is stored
-LIVE_DIR="live" # directory where live app is served from
-
-USER="$(whoami)"
-BASE="$HOME/$REPO_NAME"
-mkdir -p "$BASE" && cd "$BASE"
+cd "$BASE" # created in init.sh
+chown -R $USER:$USER "$BASE"
 
 # ------------------------------------------------------------------------------
 logSection "Determine port..."
@@ -32,40 +27,29 @@ fi
 logSuccess "Port: $PORT"
 
 # ------------------------------------------------------------------------------
-logSection "Cloning repository..."
-rm -rf "./$REPO_DIR"
-git clone --quiet -b main --single-branch --depth=1 "$REPO_URL" "./$REPO_DIR"
-rm -rf "./$REPO_DIR/.git"
-logSuccess "Repository cloned"
-
-# ------------------------------------------------------------------------------
 logSection "Installing dependencies and building..."
-mv "./.env" "./$REPO_DIR/"
-npm ci --prefix "./$REPO_DIR" --no-fund --no-audit
-npm run build --prefix "./$REPO_DIR"
+cd "./repo"
+npm ci --no-fund --no-audit
+npm run build
+cd "$BASE"
 logSuccess "Dependencies installed and built"
 
 # ------------------------------------------------------------------------------
-if [ -d "./$LIVE_DIR" ]; then
+if [ -d "./live" ]; then
   logSection "Backing up the current live build..."
-  rsync -a --delete "./$LIVE_DIR/" "./$BKP_DIR/"
+  rsync -a --delete "./live/" "./bkp/"
   logSuccess "Backup created"
 fi
 
 # ------------------------------------------------------------------------------
 logSection "Moving new build to live directory..."
-rm -rf "./$LIVE_DIR"
-mv "./$REPO_DIR" "./$LIVE_DIR"
+rm -rf "./live"
+mv "./repo" "./live"
 logSuccess "New build moved to live directory"
 
 # ------------------------------------------------------------------------------
-logSection "Ensuring all files are owned by $USER..."
-chown -R $USER:$USER "$BASE"
-logSuccess "All files are owned by $USER"
-
-# ------------------------------------------------------------------------------
 logSection "PM2 (re)start app..."
-cd "$BASE/$LIVE_DIR"
+cd "$BASE/live"
 cat >pm2.config.cjs <<EON
 module.exports = {
   apps: [
@@ -133,4 +117,3 @@ logSection "Cleaning up..."
 sudo apt-get autoremove -y
 sudo apt-get clean
 history -c
-rm -rf "$BASE/_deploy"
