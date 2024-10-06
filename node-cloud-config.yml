@@ -1,0 +1,78 @@
+#cloud-config
+
+users:
+  - name: root
+    lock_passwd: true
+  - name: vnlf
+    groups: users, admin
+    sudo: ALL=(ALL) NOPASSWD:ALL
+    shell: /bin/bash
+
+chpasswd:
+  expire: false
+
+package_update: true
+package_upgrade: true
+packages:
+  - fail2ban
+  - ufw
+  - nginx
+
+runcmd:
+  - | # Configure sshd...
+    mkdir -p /home/vnlf/.ssh && cp /root/.ssh/authorized_keys /home/vnlf/.ssh/
+    chown -R vnlf:vnlf /home/vnlf/.ssh && chmod 700 /home/vnlf/.ssh && chmod 600 /home/vnlf/.ssh/authorized_keys
+    sed -i -e '/^\(#\|\)PasswordAuthentication/s/^.*$/PasswordAuthentication no/' /etc/ssh/sshd_config
+    sed -i -e '/^\(#\|\)KbdInteractiveAuthentication/s/^.*$/KbdInteractiveAuthentication no/' /etc/ssh/sshd_config
+    sed -i -e '/^\(#\|\)ChallengeResponseAuthentication/s/^.*$/ChallengeResponseAuthentication no/' /etc/ssh/sshd_config
+    sed -i -e '/^\(#\|\)MaxAuthTries/s/^.*$/MaxAuthTries 2/' /etc/ssh/sshd_config
+    sed -i -e '/^\(#\|\)AllowTcpForwarding/s/^.*$/AllowTcpForwarding no/' /etc/ssh/sshd_config
+    sed -i -e '/^\(#\|\)X11Forwarding/s/^.*$/X11Forwarding no/' /etc/ssh/sshd_config
+    sed -i -e '/^\(#\|\)AllowAgentForwarding/s/^.*$/AllowAgentForwarding no/' /etc/ssh/sshd_config
+    sed -i -e '/^\(#\|\)AuthorizedKeysFile/s/^.*$/AuthorizedKeysFile .ssh\/authorized_keys/' /etc/ssh/sshd_config
+    sed -i '$a AllowUsers root vnlf' /etc/ssh/sshd_config
+    systemctl restart sshd
+  - | # Configure fail2ban...
+    cp /etc/fail2ban/jail.conf /etc/fail2ban/jail.local
+    sed -i 's/bantime  = 10m/bantime  = 1h/' /etc/fail2ban/jail.local
+    sed -i 's/findtime  = 10m/findtime  = 30m/' /etc/fail2ban/jail.local
+    sed -i 's/maxretry = 5/maxretry = 3/' /etc/fail2ban/jail.local
+    printf "[sshd]\nenabled = true\nbanaction = iptables-multiport" > /etc/fail2ban/jail.local
+    systemctl enable fail2ban
+    systemctl start fail2ban
+  - | # Configure ufw...
+    ufw default deny incoming
+    ufw default allow outgoing
+    ufw allow ssh
+    ufw --force enable
+  - | # Configure bash
+    echo "" >> /home/vnlf/.bashrc
+    echo "# Custom configs by Vineleaf" >> /home/vnlf/.bashrc
+    echo "alias bpedit='nano ~/.bashrc'" >> /home/vnlf/.bashrc
+    echo "alias bpload='source ~/.bashrc'" >> /home/vnlf/.bashrc
+    echo "alias ..='cd ..'" >> /home/vnlf/.bashrc
+    echo "alias ls='ls -lah --color=auto'" >> /home/vnlf/.bashrc
+  - | # Configure Nginx
+    ufw allow http >/dev/null
+    ufw allow https >/dev/null
+    cat >/etc/nginx/sites-available/default <<EON
+    server {
+      listen 80 default_server;
+      server_name  _;
+      location / {
+        return 404;
+      }
+    }
+    EON
+    ln -sf /etc/nginx/sites-available/default /etc/nginx/sites-enabled/default
+    systemctl restart nginx >/dev/null
+    systemctl enable nginx >/dev/null
+  - | # Configure Node.js
+    curl -fsSL https://deb.nodesource.com/setup_20.x | bash - >/dev/null
+    apt-get -qq install -y nodejs
+  - | # Configure pm2
+    npm install --no-fund --no-audit pm2@latest -g
+    pm2 startup | tail -n 1 | bash
+  - | # Finish and reboot
+    chown -R vnlf:vnlf /home/vnlf
+    reboot

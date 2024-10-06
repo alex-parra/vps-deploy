@@ -1,0 +1,124 @@
+#cloud-config
+
+users:
+  - name: root
+    lock_passwd: true
+  - name: vnlf
+    groups: users, admin
+    sudo: ALL=(ALL) NOPASSWD:ALL
+    shell: /bin/bash
+
+chpasswd:
+  expire: false
+
+package_update: true
+package_upgrade: true
+packages:
+  - fail2ban
+  - ufw
+  - postgresql
+  - postgresql-contrib
+
+runcmd:
+  - | # Configure sshd...
+    mkdir -p /home/vnlf/.ssh && cp /root/.ssh/authorized_keys /home/vnlf/.ssh/
+    chown -R vnlf:vnlf /home/vnlf/.ssh && chmod 700 /home/vnlf/.ssh && chmod 600 /home/vnlf/.ssh/authorized_keys
+    sed -i -e '/^\(#\|\)PasswordAuthentication/s/^.*$/PasswordAuthentication no/' /etc/ssh/sshd_config
+    sed -i -e '/^\(#\|\)KbdInteractiveAuthentication/s/^.*$/KbdInteractiveAuthentication no/' /etc/ssh/sshd_config
+    sed -i -e '/^\(#\|\)ChallengeResponseAuthentication/s/^.*$/ChallengeResponseAuthentication no/' /etc/ssh/sshd_config
+    sed -i -e '/^\(#\|\)MaxAuthTries/s/^.*$/MaxAuthTries 2/' /etc/ssh/sshd_config
+    sed -i -e '/^\(#\|\)AllowTcpForwarding/s/^.*$/AllowTcpForwarding no/' /etc/ssh/sshd_config
+    sed -i -e '/^\(#\|\)X11Forwarding/s/^.*$/X11Forwarding no/' /etc/ssh/sshd_config
+    sed -i -e '/^\(#\|\)AllowAgentForwarding/s/^.*$/AllowAgentForwarding no/' /etc/ssh/sshd_config
+    sed -i -e '/^\(#\|\)AuthorizedKeysFile/s/^.*$/AuthorizedKeysFile .ssh\/authorized_keys/' /etc/ssh/sshd_config
+    sed -i '$a AllowUsers root vnlf' /etc/ssh/sshd_config
+    systemctl restart sshd
+  - | # Configure fail2ban...
+    cp /etc/fail2ban/jail.conf /etc/fail2ban/jail.local
+    sed -i 's/bantime  = 10m/bantime  = 1h/' /etc/fail2ban/jail.local
+    sed -i 's/findtime  = 10m/findtime  = 30m/' /etc/fail2ban/jail.local
+    sed -i 's/maxretry = 5/maxretry = 3/' /etc/fail2ban/jail.local
+    printf "[sshd]\nenabled = true\nbanaction = iptables-multiport" > /etc/fail2ban/jail.local
+    systemctl enable fail2ban
+    systemctl start fail2ban
+  - | # Configure ufw...
+    ufw default deny incoming
+    ufw default allow outgoing
+    ufw allow ssh
+    ufw --force enable
+  - | # Configure bash
+    echo "" >> /home/vnlf/.bashrc
+    echo "# Custom configs by Vineleaf" >> /home/vnlf/.bashrc
+    echo "alias bpedit='nano ~/.bashrc'" >> /home/vnlf/.bashrc
+    echo "alias bpload='source ~/.bashrc'" >> /home/vnlf/.bashrc
+    echo "alias ..='cd ..'" >> /home/vnlf/.bashrc
+    echo "alias ls='ls -lah --color=auto'" >> /home/vnlf/.bashrc
+  - | # Configure postgres
+    # Generate a random password
+    PG_PASSWORD=$(openssl rand -base64 32)
+    sudo -u postgres psql -c "ALTER USER postgres WITH ENCRYPTED PASSWORD '$PG_PASSWORD';"
+    echo "# Store this and delete this file\n$PG_PASSWORD" > /home/vnlf/postgres.txt
+    chmod 600 /home/vnlf/postgres.txt
+    chown vnlf:vnlf /home/vnlf/postgres.txt
+    ufw allow 5432/tcp
+    sudo -u postgres psql -c "ALTER SYSTEM SET listen_addresses TO '*';"
+    PG_VERSION=$(ls /etc/postgresql)
+    PG_CONF_DIR="/etc/postgresql/${PG_VERSION}/main"
+    # Backup the original pg_hba.conf file
+    sudo cp "${PG_CONF_DIR}/pg_hba.conf" "${PG_CONF_DIR}/pg_hba.conf.bak"
+    sudo tee -a "${PG_CONF_DIR}/pg_hba.conf" > /dev/null <<EOF
+    # Allow connections from the private network (adjust as needed)
+    host    all             all             10.0.0.0/24            scram-sha-256
+    # Allow connections from all IP addresses (use with caution, consider removing in production)
+    host    all             all             0.0.0.0/0               scram-sha-256
+    host    all             all             ::/0                    scram-sha-256
+    EOF
+    sudo systemctl restart postgresql
+  - | # Create helper create_database.sh
+    tee /home/vnlf/create_database.sh <<'EOF'
+    #!/usr/bin/env bash
+
+    set -euo pipefail
+
+    # ------------------------------------------------------------------------
+    # This creates a new database and user with the provided name and password.
+    # Usage: `bash ./create_database.sh <database_name> <password>`
+    # ------------------------------------------------------------------------
+
+    DB_NAME=$1
+    DB_PASSWORD=$2
+
+    if [ -z "$DB_NAME" ] || [ -z "$DB_PASSWORD" ]; then
+      echo "Please provide a database name and password." && exit 1
+    fi
+
+    DB_USER="$DB_NAME"
+    sudo -u postgres psql -c "CREATE DATABASE $DB_NAME;"
+    sudo -u postgres psql -c "CREATE USER $DB_USER WITH ENCRYPTED PASSWORD '$DB_PASSWORD';"
+    sudo -u postgres psql -c "GRANT ALL PRIVILEGES ON DATABASE $DB_NAME TO $DB_USER;"
+    sudo -u postgres psql -c "ALTER DATABASE $DB_NAME OWNER TO $DB_USER;"
+    EOF
+  - | # Create helper destroy_database.sh
+    tee /home/vnlf/destroy_database.sh <<'EOF'
+    #!/usr/bin/env bash
+
+    set -euo pipefail
+
+    # ------------------------------------------------------------------------
+    # This destroys a database and user with the provided name.
+    # Usage: `bash ./destroy_database.sh <database_name>`
+    # ------------------------------------------------------------------------
+
+    DB_NAME=$1
+
+    if [ -z "$DB_NAME" ] ]; then
+      echo "Please provide a database name." && exit 1
+    fi
+
+    DB_USER="$DB_NAME"
+    sudo -u postgres dropuser $DB_USER
+    sudo -u postgres dropdb $DB_NAME
+    EOF
+  - | # Finish and reboot
+    chown -R vnlf:vnlf /home/vnlf
+    reboot
