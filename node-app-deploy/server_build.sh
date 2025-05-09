@@ -107,17 +107,83 @@ sudo bash -c "cat >/etc/nginx/sites-available/$DOMAIN <<EON
 server {
   listen 80;
   server_name $DOMAIN;
-  access_log /var/log/nginx/$DOMAIN.access.log;
-  error_log /var/log/nginx/$DOMAIN.error.log;
+
+  # Security headers
+  add_header X-Frame-Options 'SAMEORIGIN' always;
+  add_header X-XSS-Protection '1; mode=block' always;
+  add_header X-Content-Type-Options 'nosniff' always;
+  add_header Referrer-Policy 'no-referrer-when-downgrade' always;
+  add_header Content-Security-Policy 'default-src \'self\' http: https: data: blob: \'unsafe-inline\'' always;
+  add_header Strict-Transport-Security 'max-age=31536000; includeSubDomains' always;
+
+  # Logging
+  access_log /var/log/nginx/$DOMAIN.access.log combined buffer=512k flush=1m;
+  error_log /var/log/nginx/$DOMAIN.error.log warn;
+
+  # Client body settings
+  client_max_body_size 10M;
+  client_body_buffer_size 128k;
+  client_header_buffer_size 1k;
+
+  # Timeouts
+  client_body_timeout 12;
+  client_header_timeout 12;
+  keepalive_timeout 15;
+  send_timeout 10;
+
+  # Gzip compression
+  gzip on;
+  gzip_vary on;
+  gzip_proxied any;
+  gzip_comp_level 6;
+  gzip_types text/plain text/css text/xml application/json application/javascript application/xml+rss application/atom+xml image/svg+xml;
+
+  # Proxy settings
   location / {
     proxy_pass http://localhost:$PORT;
     proxy_http_version 1.1;
+
+    # WebSocket support
     proxy_set_header Upgrade \\\$http_upgrade;
     proxy_set_header Connection 'upgrade';
+
+    # Standard headers
     proxy_set_header Host \\\$host;
-    proxy_cache_bypass \\\$http_upgrade;
     proxy_set_header X-Real-IP \\\$remote_addr;
     proxy_set_header X-Forwarded-For \\\$proxy_add_x_forwarded_for;
+    proxy_set_header X-Forwarded-Proto \\\$scheme;
+
+    # Timeouts
+    proxy_connect_timeout 60s;
+    proxy_send_timeout 60s;
+    proxy_read_timeout 60s;
+
+    # Buffers
+    proxy_buffer_size 4k;
+    proxy_buffers 4 32k;
+    proxy_busy_buffers_size 64k;
+    proxy_temp_file_write_size 64k;
+
+    # Cache bypass
+    proxy_cache_bypass \\\$http_upgrade;
+
+    # Security
+    proxy_hide_header X-Powered-By;
+    proxy_hide_header X-AspNet-Version;
+  }
+
+  # Deny access to hidden files
+  location ~ /\\. {
+      deny all;
+      access_log off;
+      log_not_found off;
+  }
+
+  # Deny access to backup files
+  location ~ ~$ {
+    deny all;
+    access_log off;
+    log_not_found off;
   }
 }
 EON"
