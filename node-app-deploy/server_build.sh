@@ -49,6 +49,7 @@ logSuccess "New build moved to live directory"
 
 # ------------------------------------------------------------------------------
 logSection "PM2 (re)start app..."
+mkdir -p "$BASE/logs"
 cd "$BASE/live"
 cat >pm2.config.cjs <<EON
 module.exports = {
@@ -62,6 +63,19 @@ module.exports = {
         NODE_ENV: 'production',
         PORT: $PORT,
       },
+      // Adjusted for multi-app environment
+      instances: 1, // Single instance per app
+      exec_mode: 'fork', // Use fork mode instead of cluster
+      max_memory_restart: '512M', // More conservative memory limit
+      exp_backoff_restart_delay: 100,
+      max_restarts: 10,
+      min_uptime: '30s',
+      watch: false,
+      merge_logs: true,
+      log_date_format: 'YYYY-MM-DD HH:mm:ss Z',
+      error_file: 'logs/error.log',
+      out_file: 'logs/out.log',
+      time: true,
     },
   ],
 };
