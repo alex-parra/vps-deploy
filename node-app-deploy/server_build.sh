@@ -37,7 +37,7 @@ logSuccess "Dependencies installed and built"
 # ------------------------------------------------------------------------------
 if [ -d "./live" ]; then
   logSection "Backing up the current live build..."
-  rsync -a --delete "./live/" "./bkp/"
+  rsync -a --delete --exclude 'node_modules' "./live/" "./bkp/"
   logSuccess "Backup created"
 fi
 
